@@ -15,6 +15,7 @@ from aimtv.alignment import ensure_alignments
 from aimtv.models import VisionBundle, fetch_required_models, load_pipeline
 from aimtv.paths import output_dir
 from aimtv.planning import apply_alignments, build_review_plan, write_manifest
+from aimtv.playlist import PlexConfig
 from aimtv.preflight import preflight
 from aimtv.visualizer import init_frame, step_frame
 
@@ -36,6 +37,7 @@ def render_review_mp4(
     max_random_duration_s: float = 16.0,
     max_seconds: float | None = None,
     voice_alignment: bool = True,
+    plex: PlexConfig | None = None,
 ) -> Path:
     if fps <= 0:
         raise ValueError("fps must be positive")
@@ -56,6 +58,7 @@ def render_review_mp4(
         max_random_gap_s=max_random_gap_s,
         min_random_duration_s=min_random_duration_s,
         max_random_duration_s=max_random_duration_s,
+        plex=plex,
     )
     print(f"review seed: {plan.seed}", flush=True)
     print("review playlist:", flush=True)

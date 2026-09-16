@@ -14,7 +14,7 @@ from aimtv.alignment import AlignmentResult, load_cached_alignments
 from aimtv.audio_ops import stitch_like_airadio
 from aimtv.context import ClipContext, resolve_contexts
 from aimtv.paths import airadio_home, ensure_aimtv_layout, output_dir
-from aimtv.playlist import Clip, build_review_playlist
+from aimtv.playlist import Clip, PlexConfig, build_review_playlist
 from aimtv.prompts import load_prompt_bank
 from aimtv.schedule import PromptSchedule, build_prompt_schedule
 
@@ -109,6 +109,7 @@ def build_review_plan(
     max_random_gap_s: float = 8.0,
     min_random_duration_s: float = 7.0,
     max_random_duration_s: float = 16.0,
+    plex: PlexConfig | None = None,
 ) -> ReviewPlan:
     """Select, stitch, verify, schedule, and record a finite review timeline."""
     ensure_aimtv_layout()
@@ -118,6 +119,7 @@ def build_review_plan(
         interstitial_min=interstitial_min,
         interstitial_max=interstitial_max,
         seed=render_seed,
+        plex=plex,
     )
 
     staging = output_dir() / "review-staging"
