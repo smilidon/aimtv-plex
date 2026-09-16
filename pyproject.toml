@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aimtv"
+version = "0.4.0"
+description = "AI MTV — sovereign AI Music Television from a local Airadio library"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+authors = [{ name = "Decentricity" }]
+keywords = ["ai-music", "music-video", "airadio", "local-ai", "generative-video"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Multimedia :: Video",
+]
+dependencies = [
+  "airadio>=0.4.3",
+  "faster-whisper>=1.2,<2",
+  "numpy>=1.24",
+  "soundfile>=0.12",
+  "tqdm>=4.66",
+  "huggingface_hub>=0.23",
+  "torch>=2.1",
+  "diffusers>=0.27",
+  "transformers>=4.38",
+  "accelerate>=0.27",
+  "Pillow>=10.0",
+  "opencv-python-headless>=4.8",
+]
+
+[project.optional-dependencies]
+dev = ["build", "twine"]
+
+[project.scripts]
+aimtv = "aimtv.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/Decentricity/aimtv"
+Repository = "https://github.com/Decentricity/aimtv"
+Issues = "https://github.com/Decentricity/aimtv/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+aimtv = ["data/*.json"]
