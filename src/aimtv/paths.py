@@ -3,6 +3,13 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+def aimtv_cache_dir() -> Path:
+    """Return the cache directory for AIMTV (downloaded streams, lyrics, etc.)."""
+    raw = os.environ.get("AIMTV_CACHE_HOME")
+    if raw:
+        return Path(raw).expanduser().resolve()
+    return (Path.home() / ".cache/aimtv").resolve()
+
 
 def aimtv_home() -> Path:
     raw = os.environ.get("AIMTV_HOME")

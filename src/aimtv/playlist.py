@@ -83,7 +83,7 @@ def build_review_playlist(
     interstitial_min: int = 1,
     interstitial_max: int = 3,
     seed: int | None = None,
-    plex_token: Optional[***] = None,
+    plex_token: Optional[str] = None,
     plex_url: Optional[str] = None,
     plex_section: Optional[str] = None,
     genius_token: Optional[str] = None,
@@ -124,7 +124,7 @@ def build_review_playlist(
 
 def get_plex_song_clips(
     *,
-    plex_token: ***,
+    plex_token: str,
     plex_url: str,
     plex_section: str,
     genius_token: Optional[str] = None,
