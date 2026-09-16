@@ -11,6 +11,14 @@ def aimtv_home() -> Path:
     return (Path.home() / ".local/share/aimtv").resolve()
 
 
+def aimtv_cache_dir() -> Path:
+    """Cache for derived data that can be regenerated (e.g. Plex lyrics)."""
+    raw = os.environ.get("AIMTV_CACHE_HOME")
+    if raw:
+        return Path(raw).expanduser().resolve()
+    return (Path.home() / ".cache/aimtv").resolve()
+
+
 def models_dir(home: Path | None = None) -> Path:
     return (home or aimtv_home()) / "models"
 

@@ -1,7 +1,8 @@
-"""Resolve verified lyric context from an Airadio library."""
+"""Resolve verified lyric context from an Airadio library or a Plex-sourced clip."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -53,12 +54,41 @@ def _unverified(clip: Clip, source: str, warning: str) -> ClipContext:
     )
 
 
+def _sourced_context(clip: Clip) -> ClipContext:
+    """Context for a song that brought its own lyrics file (Plex tracks).
+
+    The text is not reconstructed from a catalog, so traceability comes from
+    recording where it came from (embedded tag or Genius) and its hash.
+    """
+    try:
+        lyrics = Path(clip.lyrics_path).read_text(encoding="utf-8")
+    except OSError as exc:
+        return _unverified(clip, "plex", f"lyrics file unreadable: {exc}")
+    if not lyrics.strip():
+        return _unverified(clip, "plex", "no embedded lyrics and no Genius match")
+    digest = hashlib.sha256(lyrics.encode("utf-8")).hexdigest()
+    source = clip.lyrics_source or "unknown"
+    return ClipContext(
+        audio=clip.path,
+        kind=clip.kind,
+        title=clip.title,
+        lyrics=lyrics,
+        lyrics_sha256=digest,
+        provenance_id=f"{clip.provenance_id or 'plex'}:{source}:{digest[:16]}",
+        verified=True,
+        source=f"plex {source} lyrics",
+    )
+
+
 def resolve_contexts(clips: list[Clip], airadio_home: Path) -> list[ClipContext]:
     """Resolve exact lyrics for every clip, never treating unverified text as fact."""
     home = interstitial_provenance.canonical_home(airadio_home)
     catalog = _song_catalog(home)
     contexts: list[ClipContext] = []
     for clip in clips:
+        if clip.kind == "song" and clip.lyrics_path is not None:
+            contexts.append(_sourced_context(clip))
+            continue
         if clip.kind == "song":
             entry = catalog.get(str(clip.path.resolve()))
             if not entry:

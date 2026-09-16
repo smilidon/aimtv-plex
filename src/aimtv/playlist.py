@@ -1,4 +1,4 @@
-"""Library-only playlist: songs and interstitials from AIRADIO_HOME."""
+"""Playlist sources: Airadio (original) and Plex."""
 
 from __future__ import annotations
 
@@ -7,8 +7,7 @@ import random
 import secrets
 from dataclasses import dataclass
 from pathlib import Path
-
-from aimtv.paths import airadio_home
+from aimtv.paths import airadio_home, aimtv_cache_dir
 from aimtv.preflight import count_interstitials, count_library_songs
 
 
@@ -17,6 +16,21 @@ class Clip:
     path: Path
     kind: str  # song | ad | station-id
     title: str
+    # Set only for songs that carry their own lyrics (e.g. Plex tracks). Airadio
+    # clips leave these unset and are resolved through the catalog/provenance.
+    lyrics_path: Path | None = None
+    lyrics_source: str | None = None
+    provenance_id: str | None = None
+
+
+@dataclass(frozen=True)
+class PlexConfig:
+    """Connection details for sourcing songs from a Plex music section."""
+
+    url: str
+    token: str
+    section: str
+    genius_token: str | None = None
 
 
 def _catalog_titles(home: Path) -> dict[str, str]:
@@ -55,14 +69,12 @@ def pick_interstitials(home: Path, n: int, rng: random.Random) -> list[Clip]:
     return [Clip(path=p, kind=k, title=p.stem) for p, k in chosen]
 
 
-def build_review_playlist(
+def get_airadio_song_clips(
     *,
     song_count: int = 2,
-    interstitial_min: int = 1,
-    interstitial_max: int = 3,
     seed: int | None = None,
 ) -> list[Clip]:
-    """Finite playlist: song, 1–3 interstitials, song, … for song_count songs."""
+    """Return exactly `song_count` song Clips from the Airadio library."""
     home = airadio_home()
     songs = count_library_songs(home)
     if len(songs) < song_count:
@@ -71,11 +83,85 @@ def build_review_playlist(
     titles = _catalog_titles(home)
     picks = rng.sample(songs, song_count)
     clips: list[Clip] = []
-    for i, song in enumerate(picks):
+    for song in picks:
         clips.append(
             Clip(path=song, kind="song", title=title_for(song, home, titles))
         )
-        if i + 1 < song_count:
+    return clips
+
+
+def build_review_playlist(
+    *,
+    song_count: int = 2,
+    interstitial_min: int = 1,
+    interstitial_max: int = 3,
+    seed: int | None = None,
+    plex: PlexConfig | None = None,
+) -> list[Clip]:
+    """Finite playlist: song, 1–3 interstitials, song, … for song_count songs.
+
+    Songs come from Plex when `plex` is given, otherwise from the Airadio
+    library. Interstitials always come from the Airadio library.
+    """
+    if plex is not None:
+        song_clips = get_plex_song_clips(plex, song_count=song_count, seed=seed)
+    else:
+        song_clips = get_airadio_song_clips(song_count=song_count, seed=seed)
+
+    home = airadio_home()
+    rng = random.Random(seed if seed is not None else secrets.randbits(32))
+    clips: list[Clip] = []
+    for i, song in enumerate(song_clips):
+        clips.append(song)
+        if i + 1 < len(song_clips):
             n = rng.randint(interstitial_min, interstitial_max)
             clips.extend(pick_interstitials(home, n, rng))
     return clips
+
+
+# Upper bound on tracks pulled from Plex before sampling, so a large library
+# does not force a full scan (and a full lyric lookup) for a two-song review.
+PLEX_SAMPLE_POOL = 100
+
+
+def get_plex_song_clips(
+    plex: PlexConfig,
+    *,
+    song_count: int = 2,
+    seed: int | None = None,
+) -> list[Clip]:
+    """Return exactly `song_count` song Clips sampled from a Plex library section."""
+    from aimtv.plex_playlist import PlexPlaylistSource
+
+    source = PlexPlaylistSource(
+        baseurl=plex.url,
+        token=plex.token,
+        section_name=plex.section,
+        genius_token=plex.genius_token,
+        cache_dir=aimtv_cache_dir() / "plex",
+    )
+    rng = random.Random(seed if seed is not None else secrets.randbits(32))
+
+    # Sample rating keys first (cheap metadata), then resolve only the chosen
+    # tracks so lyric extraction/lookup runs for song_count tracks, not the pool.
+    pool = source.track_keys(limit=max(song_count, PLEX_SAMPLE_POOL))
+    if len(pool) < song_count:
+        raise RuntimeError(
+            f"Plex section '{plex.section}' has {len(pool)} track(s); need at least {song_count}."
+        )
+    chosen = rng.sample(pool, song_count)
+
+    clips: list[Clip] = []
+    for audio_path, lyrics_path, metadata in source.resolve_tracks(chosen):
+        clips.append(
+            Clip(
+                path=audio_path,
+                kind="song",
+                title=str(metadata["title"]),
+                lyrics_path=lyrics_path,
+                lyrics_source=metadata.get("lyrics_source"),
+                provenance_id=f"plex:{metadata['rating_key']}",
+            )
+        )
+    return clips
+
