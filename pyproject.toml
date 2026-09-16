@@ -51,3 +51,11 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 aimtv = ["data/*.json"]
+
+[project.optional-dependencies]
+plex = [
+    "plexapi>=4.0",
+    "lyricsgenius>=3.0",
+    "mutagen>=1.45",
+]
+dev = ["build", "twine"]

@@ -34,6 +34,31 @@ def _add_playlist_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--random-max-gap", type=float, default=8.0)
     parser.add_argument("--random-min-seconds", type=float, default=7.0)
     parser.add_argument("--random-max-seconds", type=float, default=16.0)
+    # Plex arguments
+    parser.add_argument(
+        "--plex-token",
+        type=str,
+        default=None,
+        help="Plex token (can also be set via PLEX_TOKEN environment variable)",
+    )
+    parser.add_argument(
+        "--plex-url",
+        type=str,
+        default=None,
+        help="Base URL of Plex server (e.g., http://localhost:32400)",
+    )
+    parser.add_argument(
+        "--plex-section",
+        type=str,
+        default=None,
+        help="Name of the music library section in Plex (e.g., 'Music')",
+    )
+    parser.add_argument(
+        "--genius-token",
+        type=str,
+        default=None,
+        help="Genius API token for lyric lookup (can also be set via GENIUS_TOKEN environment variable)",
+    )
 
 
 def _playlist_kwargs(args: argparse.Namespace) -> dict:
@@ -48,13 +73,17 @@ def _playlist_kwargs(args: argparse.Namespace) -> dict:
         "max_random_gap_s": float(args.random_max_gap),
         "min_random_duration_s": float(args.random_min_seconds),
         "max_random_duration_s": float(args.random_max_seconds),
+        "plex_token": args.plex_token,
+        "plex_url": args.plex_url,
+        "plex_section": args.plex_section,
+        "genius_token": args.genius_token,
     }
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="aimtv",
-        description="AI MTV — AI Music Television from a local Airadio library",
+        description="AI MTV — AI Music Television from a local Airadio library or Plex server",
     )
     parser.add_argument("--version", action="version", version=f"aimtv {__version__}")
     sub = parser.add_subparsers(dest="command")
@@ -137,7 +166,10 @@ def main(argv: list[str] | None = None) -> int:
     if command == "run":
         # Keep this lightweight check before importing the Airadio-dependent
         # rendering modules, so a missing dependency produces useful guidance.
-        if check_airadio_ready() != 0:
+        # However, if using Plex, we might not need Airadio to be ready.
+        # We'll check if we're using Plex; if not, we require Airadio.
+        use_plex = all(v is not None for v in (args.plex_token, args.plex_url, args.plex_section))
+        if not use_plex and check_airadio_ready() != 0:
             return 1
         from aimtv.review import render_review_mp4
 
@@ -154,7 +186,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if command == "plan":
-        if check_airadio_ready() != 0:
+        # Similar to run: only require Airadio if not using Plex
+        use_plex = all(v is not None for v in (args.plex_token, args.plex_url, args.plex_section))
+        if not use_plex and check_airadio_ready() != 0:
             return 1
         from aimtv.planning import build_review_plan
 
