@@ -7,7 +7,9 @@ bridge interstitial → next song. No numpy every-join crossfade.
 
 from __future__ import annotations
 
+import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -100,16 +102,39 @@ def crossfade(a: Path, b: Path, out: Path, fade_s: float = CROSSFADE_S) -> Path:
 
 
 def _hard_concat_wavs(paths: list[Path], out: Path) -> Path:
-    """Sequential join with stream copy (same as consecutive airadio play() calls)."""
+    """Hard join, preserving PCM samples when all input formats already match.
+
+    Plex tracks and Airadio interstitials can have different sample rates or
+    channel counts. The concat demuxer can silently stream-copy incompatible
+    PCM, changing duration and pitch without reporting an FFmpeg error.
+    """
     if not paths:
         raise RuntimeError("no audio pieces to concatenate")
     if len(paths) == 1:
         out.parent.mkdir(parents=True, exist_ok=True)
         if paths[0].resolve() != out.resolve():
-            out.write_bytes(paths[0].read_bytes())
+            shutil.copyfile(paths[0], out)
         return out
 
     out.parent.mkdir(parents=True, exist_ok=True)
+    infos = [sf.info(str(path)) for path in paths]
+    formats = {(info.samplerate, info.channels, info.subtype, info.endian, info.format) for info in infos}
+    if len(formats) > 1:
+        # Keep timing intact by converting each piece *before* concatenation.
+        # Use the first piece's sample rate/layout for the final timeline. All
+        # generated pieces are PCM16; matching Airadio inputs keep the old path.
+        with tempfile.TemporaryDirectory(prefix="aimtv-concat-", dir=out.parent) as raw:
+            normalized = []
+            for index, path in enumerate(paths):
+                piece = Path(raw) / f"{index:04d}.wav"
+                _run_cmd([
+                    "ffmpeg", "-y", "-loglevel", "error", "-i", str(path),
+                    "-vn", "-ar", str(infos[0].samplerate),
+                    "-ac", str(infos[0].channels), "-c:a", "pcm_s16le", str(piece),
+                ])
+                normalized.append(piece)
+            return _hard_concat_wavs(normalized, out)
+
     lst = out.parent / f"{out.stem}-concat.txt"
     lines: list[str] = []
     for path in paths:

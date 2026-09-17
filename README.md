@@ -7,47 +7,57 @@ audio-to-video generation.
 
 > **This is a community fork** (`smilidon/aimtv-plex`) that adds Plex Media Server
 > support to the original [Decentricity/aimtv](https://github.com/Decentricity/aimtv)
-> project. Everything not about Plex behaves exactly as upstream.
+> project. It retains the Airadio playback model and includes the reliability fixes
+> described in [PLEX_INTEGRATION.md](PLEX_INTEGRATION.md).
 
 ## Requirements
 
-1. Install and run [Airadio](https://pypi.org/project/airadio/) until you have at least
+1. Python 3.10 or newer, plus **FFmpeg and ffprobe** on `PATH`. On Debian/Ubuntu:
+   `sudo apt-get install ffmpeg`. Git is also needed for the repository installs below.
+2. Install and run [Airadio](https://pypi.org/project/airadio/) until you have at least
    2 library songs, 1 ad, and 1 station-id interstitial. Airadio is required in both
-   modes: interstitials and provenance verification always come from it. In Plex mode
-   only the *songs* are replaced.
-2. An NVIDIA GPU with enough free VRAM (AI MTV will check and ask you to free the GPU
+   modes: interstitials and provenance verification always come from it. The current
+   startup check still requires these assets in Plex mode, even though only the
+   Plex songs are selected for playback.
+3. An NVIDIA GPU with enough free VRAM (AI MTV will check and ask you to free the GPU
    yourself — it never kills other processes).
-3. **Plex mode only:** a reachable Plex Media Server, a Plex token with access to the
-   music section, and the media files readable on this machine at the paths Plex
+4. **Plex mode only:** a reachable Plex Media Server, a Plex token with access to a
+   **music** section, and the media files readable on this machine at the paths Plex
    reports (run AI MTV on the Plex host, or mount the media share at the same path).
    Optionally a Genius API token for lyric lookup when tracks have no embedded lyrics.
 
-## Install
+## Install this fork
 
-With pip:
+Install from this repository to select the Plex fork explicitly. A plain
+`pip install aimtv` or `pip install "aimtv[plex]"` selects a package from your package
+index, not this GitHub repository.
+
+With pip, preferably inside a virtual environment:
 
 ```bash
-pip install "aimtv[plex]"
+python -m pip install "aimtv[plex] @ git+https://github.com/smilidon/aimtv-plex.git"
 ```
 
 Or as an isolated CLI with pipx:
 
 ```bash
-pipx install "aimtv[plex]"
-pipx install airadio
+pipx install --include-deps "aimtv[plex] @ git+https://github.com/smilidon/aimtv-plex.git"
 ```
+
+`--include-deps` also exposes the Airadio CLI from the same environment. Installing
+Airadio into a separate pipx environment does not make its Python modules importable
+inside AI MTV's environment.
 
 From source:
 
 ```bash
 git clone https://github.com/smilidon/aimtv-plex.git
 cd aimtv-plex
-pip install -e ".[plex,dev]"
+python -m pip install -e ".[plex,dev]"
 ```
 
-AI MTV checks for Airadio at startup. If Airadio is missing it prints both installation
-choices. If the library is empty, it asks you to run `airadio` for a bit before trying
-again.
+AI MTV checks for Airadio at startup. If the library is empty, it asks you to run
+`airadio` for a bit before trying again.
 
 ## Review build (local testing)
 
@@ -79,6 +89,10 @@ loading the model or using the GPU:
 aimtv plan --seed 42
 ```
 
+Planning still reads and stitches the selected audio, so it requires local media and
+FFmpeg. To omit interstitials from playback, pass both `--interstitial-min 0` and
+`--interstitial-max 0`; the startup asset requirement above still applies.
+
 On first run, AI MTV shows every missing model, its destination, and the approximate
 download size, then asks once for permission. With consent it installs SD-Turbo
 (~6.5 GB) and Faster-Whisper Small (~0.5 GB), showing download progress. Voice timing
@@ -95,13 +109,15 @@ aimtv fetch-models
 ## Plex mode
 
 Give `run` or `plan` a Plex server, token and music section and the songs are sampled
-from that section instead of the Airadio library. Every flag has an environment
-variable fallback; use the variables for tokens so they stay out of shell history.
+from that section instead of the Airadio library. Every Plex connection flag has an
+environment variable fallback; use the variables for tokens so they do not appear
+in the command's process arguments. Keep token values out of shared logs and shell
+history; the exports below contain placeholders only.
 
 ```bash
 export PLEX_URL="http://localhost:32400"
 export PLEX_TOKEN="your_plex_token"
-export PLEX_SECTION="Music"          # library section name
+export PLEX_SECTION="Music"              # library section name
 export GENIUS_TOKEN="your_genius_token"   # optional lyric fallback
 
 aimtv plan --seed 42          # inspect the playlist without loading models
@@ -110,40 +126,55 @@ aimtv run --review --yes      # render
 
 The same values can be passed as `--plex-url`, `--plex-token`, `--plex-section` and
 `--genius-token`. All three Plex values are required together; a partial set is an
-error.
+error. Movie and TV sections are rejected with an explicit music-library error.
 
 How it works:
 
-- Up to 100 tracks are listed from the section (metadata only) and `--songs` of them
-  are sampled with the render seed, so `--seed` stays deterministic.
+- Up to `max(100, --songs)` tracks are listed from the section (metadata only), then
+  `--songs` are sampled with the render seed. Reproducibility assumes the same library
+  and returned track order; this is not uniform sampling across a larger library.
 - Audio is read straight from the file path Plex reports. Streaming/downloading media
-  from Plex is **not** implemented.
-- Lyrics are taken from the file's embedded tags (ID3 `USLT`, Vorbis/FLAC `LYRICS`,
-  MP4 `©lyr`), then from Genius if `GENIUS_TOKEN` is set. The text and its source are
-  cached under `~/.cache/aimtv/plex/<ratingKey>.lyrics.txt` (override the root with
-  `AIMTV_CACHE_HOME`). Delete the file to refresh.
+  from Plex is **not** implemented. Mixed sample rates/channel counts are normalized
+  before joining audio pieces, preserving their duration and pitch. Matching PCM
+  pieces keep the stream-copy path.
+- Lyrics are taken from embedded tags (ID3 `USLT`, Vorbis/FLAC `LYRICS`, MP4 `©lyr`),
+  then from Genius if `GENIUS_TOKEN` is set. The text is cached under
+  `~/.cache/aimtv/plex/<server-id-sha256>/<ratingKey>.lyrics.txt`, with source, file
+  identity and lyric hash in an adjacent `<ratingKey>.lyrics.json` file. Override
+  the cache root with `AIMTV_CACHE_HOME`. Tokens are not stored in these files.
+- Cached lyrics are refreshed when the local audio path, size, modification time or
+  track title/artist/album changes, or when the cache is incomplete or corrupt.
+  Missing lyrics are retried on later runs, so adding tags or enabling Genius works
+  without manual cache removal. Delete a track's `.lyrics.txt` to force a refresh.
+  Old flat `<ratingKey>.lyrics.txt` caches are ignored, not migrated or deleted.
 - The render manifest records the lyric source (`plex embedded lyrics` or
-  `plex genius lyrics`) and SHA-256, so a render is still traceable to the exact text
-  that drove it. Unlike Airadio songs, that text is not reconstructed from a
-  catalog — embedded tags and Genius are trusted as given.
-- A track with no lyrics from either source is reported as `UNVERIFIED` and `run`
-  refuses to render, the same as an unverified Airadio clip. Tag the file or provide
-  a Genius token.
+  `plex genius lyrics`), server-scoped provenance ID and SHA-256 of the text used.
+  Unlike Airadio songs, that text is not reconstructed from a catalog — embedded
+  tags and Genius are trusted as given. Here, `verified` means sourced and traceable,
+  not independently confirmed as the words performed in the recording.
+- A track with no lyrics or an unknown lyric source is reported as `UNVERIFIED` and
+  `run` refuses to render. Tag the file or provide a Genius token.
 
 ### Troubleshooting
 
 - **Can't connect:** check `PLEX_URL` is reachable from this machine and the token is
   valid for that server (`http://<host>:32400/web` should load).
-- **Section not found:** `PLEX_SECTION` must match the library name in Plex exactly.
+- **Section not found:** `PLEX_SECTION` must match the library name in Plex exactly
+  and must identify a music library.
 - **"not readable locally":** the path Plex reports for the track does not exist
   here. Run on the Plex host or mount the share at the same path.
-- **No lyrics:** tag the file with lyrics, or set `GENIUS_TOKEN`.
+- **No lyrics:** tag the file with lyrics, or set `GENIUS_TOKEN`, then retry.
+- **Missing ffmpeg/ffprobe:** install the system FFmpeg package and ensure both
+  executables are available on `PATH`.
 
 ## Doctor
 
 ```bash
 aimtv doctor
 ```
+
+This checks Airadio assets and NVIDIA GPU headroom; it is not a live Plex connection
+test or a comprehensive dependency check.
 
 ## Channel prompts
 
@@ -155,6 +186,21 @@ prompts:
 
 Schema: `prompts` (list of channel lines), `subjects` (short subject tags for weighting),
 `style_suffix` (appended to every pick). Add or remove strings anytime — no code change.
+
+## Tests
+
+With the development and Plex dependencies installed, run:
+
+```bash
+python -m pytest -q
+python -m build
+python -m twine check dist/*
+```
+
+The CI workflow runs the suite on Python 3.10 and 3.12, checks for undefined/unused
+Python names with pyflakes, and builds/checks the distributions. Plex/Genius calls
+are mocked; audio integration tests use real FFmpeg and synthetic tones. No live
+Plex server, credentials, model downloads or GPU are needed for these tests.
 
 ## License and acknowledgements
 

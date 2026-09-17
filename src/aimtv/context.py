@@ -62,12 +62,14 @@ def _sourced_context(clip: Clip) -> ClipContext:
     """
     try:
         lyrics = Path(clip.lyrics_path).read_text(encoding="utf-8")
-    except OSError as exc:
+    except (OSError, UnicodeError) as exc:
         return _unverified(clip, "plex", f"lyrics file unreadable: {exc}")
     if not lyrics.strip():
         return _unverified(clip, "plex", "no embedded lyrics and no Genius match")
+    if clip.lyrics_source not in {"embedded", "genius"}:
+        return _unverified(clip, "plex", "lyrics source missing or unsupported; refresh the Plex cache")
     digest = hashlib.sha256(lyrics.encode("utf-8")).hexdigest()
-    source = clip.lyrics_source or "unknown"
+    source = clip.lyrics_source
     return ClipContext(
         audio=clip.path,
         kind=clip.kind,

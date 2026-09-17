@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import random
 import secrets
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from aimtv.paths import airadio_home, aimtv_cache_dir
 from aimtv.preflight import count_interstitials, count_library_songs
@@ -28,9 +28,9 @@ class PlexConfig:
     """Connection details for sourcing songs from a Plex music section."""
 
     url: str
-    token: str
+    token: str = field(repr=False)
     section: str
-    genius_token: str | None = None
+    genius_token: str | None = field(default=None, repr=False)
 
 
 def _catalog_titles(home: Path) -> dict[str, str]:
@@ -58,14 +58,16 @@ def title_for(path: Path, home: Path, titles: dict[str, str]) -> str:
 
 
 def pick_interstitials(home: Path, n: int, rng: random.Random) -> list[Clip]:
+    if n <= 0:
+        return []
     pool: list[tuple[Path, str]] = []
     for kind in ("ads", "station-id"):
-        for path in count_interstitials(home, kind):
+        for path in sorted(count_interstitials(home, kind)):
             pool.append((path, "ad" if kind == "ads" else "station-id"))
     if not pool:
         return []
-    n = max(1, min(n, len(pool)))
-    chosen = rng.sample(pool, n) if n <= len(pool) else [rng.choice(pool) for _ in range(n)]
+    n = min(n, len(pool))
+    chosen = rng.sample(pool, n)
     return [Clip(path=p, kind=k, title=p.stem) for p, k in chosen]
 
 
@@ -160,7 +162,10 @@ def get_plex_song_clips(
                 title=str(metadata["title"]),
                 lyrics_path=lyrics_path,
                 lyrics_source=metadata.get("lyrics_source"),
-                provenance_id=f"plex:{metadata['rating_key']}",
+                provenance_id=(
+                    f"plex:{metadata['server_id']}:{metadata['rating_key']}"
+                    if metadata.get("server_id") else f"plex:{metadata['rating_key']}"
+                ),
             )
         )
     return clips

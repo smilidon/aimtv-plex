@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import tempfile
 from pathlib import Path
 from typing import Iterable, Iterator
 
@@ -52,6 +55,22 @@ def _extract_embedded_lyrics(audio_path: Path) -> str | None:
     return None
 
 
+def _write_text_atomic(path: Path, text: str) -> None:
+    """Publish a complete cache file without leaving a partial write on failure."""
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent,
+            prefix=f".{path.name}.", suffix=".tmp", delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
+            handle.write(text)
+        temporary.replace(path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 class PlexPlaylistSource:
     """Resolve tracks from a Plex library section to (audio_path, lyrics_path, metadata).
 
@@ -60,7 +79,8 @@ class PlexPlaylistSource:
     or downloading media from Plex is not implemented.
 
     Lyrics come from embedded tags first, then from Genius when a token is given.
-    Both are cached under `cache_dir` keyed by the track's Plex rating key.
+    Caches are isolated by server identity and rating key, and validated against
+    the local file, track metadata and lyric hash before reuse.
     """
 
     def __init__(
@@ -80,19 +100,29 @@ class PlexPlaylistSource:
         except (NotFound, BadRequest) as exc:
             raise ValueError(f"Plex section '{section_name}' not found or inaccessible.") from exc
 
+        if self.section.type != "artist":
+            raise ValueError(f"Plex section '{section_name}' is not a music library.")
+
         self.genius = None
         if genius_token:
             from lyricsgenius import Genius
 
             self.genius = Genius(genius_token, remove_section_headers=True)
-        self.cache_dir = cache_dir or aimtv_cache_dir() / "plex"
+        # ratingKey is unique only within one Plex server. Hash the server ID,
+        # never the token or URL, so credentials cannot leak into cache paths.
+        self.server_id = hashlib.sha256(self.plex.machineIdentifier.encode("utf-8")).hexdigest()
+        self.cache_dir = (cache_dir or aimtv_cache_dir() / "plex") / self.server_id
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
     # -- track discovery -------------------------------------------------
 
     def track_keys(self, *, limit: int | None = None) -> list[int]:
         """Rating keys of tracks in the section (metadata only; no file access)."""
-        kwargs = {"maxresults": limit} if limit else {}
+        if limit is not None and limit < 0:
+            raise ValueError("track limit must be non-negative")
+        if limit == 0:
+            return []
+        kwargs = {"maxresults": limit} if limit is not None else {}
         return [int(track.ratingKey) for track in self.section.searchTracks(**kwargs)]
 
     def resolve_tracks(self, keys: Iterable[int]) -> Iterator[tuple[Path, Path, dict]]:
@@ -111,6 +141,7 @@ class PlexPlaylistSource:
         lyrics_path, lyrics_source = self._lyrics_for(track, audio_path)
         metadata = {
             "rating_key": int(track.ratingKey),
+            "server_id": self.server_id,
             "title": track.title,
             "artist": getattr(track, "grandparentTitle", None),
             "album": getattr(track, "parentTitle", None),
@@ -138,19 +169,48 @@ class PlexPlaylistSource:
     def _lyrics_for(self, track, audio_path: Path) -> tuple[Path, str | None]:
         """Return (lyrics_path, source). The file is empty when no lyrics were found."""
         cache = self._lyrics_cache_path(track)
-        marker = cache.with_suffix(".source")
-        if cache.is_file():
-            source = marker.read_text(encoding="utf-8").strip() if marker.is_file() else None
-            return cache, source or None
+        marker = cache.with_suffix(".json")
+        stat = audio_path.stat()
+        identity = {
+            "audio_path": str(audio_path.resolve()),
+            "audio_size": stat.st_size,
+            "audio_mtime_ns": stat.st_mtime_ns,
+            "title": track.title,
+            "artist": getattr(track, "grandparentTitle", None),
+            "album": getattr(track, "parentTitle", None),
+        }
+        try:
+            lyrics = cache.read_text(encoding="utf-8")
+            saved = json.loads(marker.read_text(encoding="utf-8"))
+            if (
+                lyrics.strip()
+                and isinstance(saved, dict)
+                and saved.get("version") == 1
+                and saved.get("identity") == identity
+                and saved.get("source") in ("embedded", "genius")
+                and saved.get("lyrics_sha256") == hashlib.sha256(lyrics.encode("utf-8")).hexdigest()
+            ):
+                return cache, saved["source"]
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            pass  # Missing, incomplete or corrupt entries are safe to rebuild.
 
+        # Never permanently cache a miss: tags may be added, a Genius token may
+        # become available, or a previous request may have failed transiently.
         lyrics = _extract_embedded_lyrics(audio_path)
-        source: str | None = "embedded" if lyrics else None
-        if lyrics is None and self.genius is not None:
+        source: str | None = "embedded" if lyrics and lyrics.strip() else None
+        if source is None and self.genius is not None:
             lyrics = self._genius_lyrics(track)
-            source = "genius" if lyrics else None
-
-        cache.write_text(lyrics or "", encoding="utf-8")
-        marker.write_text(source or "", encoding="utf-8")
+            source = "genius" if lyrics and lyrics.strip() else None
+        lyrics = (lyrics or "").replace("\r\n", "\n").replace("\r", "\n")
+        saved = {
+            "version": 1,
+            "identity": identity,
+            "source": source,
+            "lyrics_sha256": hashlib.sha256(lyrics.encode("utf-8")).hexdigest(),
+        }
+        # Either file can be published first: readers verify the pair's hash.
+        _write_text_atomic(cache, lyrics)
+        _write_text_atomic(marker, json.dumps(saved, ensure_ascii=False) + "\n")
         return cache, source
 
     def _genius_lyrics(self, track) -> str | None:
