@@ -142,11 +142,12 @@ jobs:
           PRERELEASE: ${{ needs.test-build.outputs.prerelease }}
         run: |
           python - <<'PY'
+          import hashlib
           import json
           import os
-          import subprocess
           from pathlib import Path
           from urllib.error import HTTPError
+          from urllib.parse import quote
           from urllib.request import Request, urlopen
 
           repo = os.environ['GITHUB_REPOSITORY']
@@ -154,17 +155,22 @@ jobs:
           version = os.environ['VERSION']
           tag = f'v{version}'
           assert repo == 'smilidon/aimtv-plex'
+          headers = {
+              'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+              'Accept': 'application/vnd.github+json',
+              'Content-Type': 'application/json',
+          }
 
-          def api(path):
-              request = Request(f'https://api.github.com/repos/{repo}/{path}', headers={
-                  'Authorization': f"Bearer {os.environ['GH_TOKEN']}",
-                  'Accept': 'application/vnd.github+json',
-              })
+          def api(path, method='GET', data=None):
+              body = json.dumps(data).encode() if data is not None else None
+              request = Request(f'https://api.github.com/repos/{repo}/{path}',
+                                headers=headers, method=method, data=body)
               try:
                   with urlopen(request, timeout=30) as response:
-                      return json.load(response)
+                      raw = response.read()
+                      return json.loads(raw) if raw else None
               except HTTPError as error:
-                  if error.code == 404:
+                  if error.code == 404 and method == 'GET':
                       return None
                   raise
 
@@ -175,10 +181,25 @@ jobs:
               if obj['type'] != 'commit' or obj['sha'] != sha:
                   raise SystemExit('Refusing to move or reuse a tag at a different commit')
 
+          def find_release():
+              # The by-tag endpoint omits unpublished drafts. Enumerate the
+              # authenticated collection and retain the returned numeric ID.
+              page = 1
+              while True:
+                  releases = api(f'releases?per_page=100&page={page}')
+                  matches = [item for item in releases if item['tag_name'] == tag]
+                  if len(matches) > 1:
+                      raise SystemExit('Multiple drafts for this tag; manual review required')
+                  if matches:
+                      return matches[0]
+                  if len(releases) < 100:
+                      return None
+                  page += 1
+
           ref = api(f'git/ref/tags/{tag}')
           if ref:
               check_tag(ref)
-          release = api(f'releases/tags/{tag}')
+          release = find_release()
           files = sorted(Path('release-artifacts/dist').iterdir())
           if release and not release['draft']:
               assert ref, 'Published release has no matching tag'
@@ -186,25 +207,39 @@ jobs:
               assert required <= {asset['name'] for asset in release['assets']}, 'Published release assets missing'
               print('Existing public release retained; PyPI will use its original assets.')
               raise SystemExit(0)
+          fields = {
+              'tag_name': tag,
+              'target_commitish': sha,
+              'name': f'AI MTV Plex {version}',
+              'body': Path('release-artifacts/notes.md').read_text(encoding='utf-8'),
+              'draft': True,
+              'prerelease': os.environ['PRERELEASE'] == 'true',
+          }
           if release is None:
-              command = ['gh', 'release', 'create', tag, '--repo', repo, '--target', sha,
-                         '--title', f'AI MTV Plex {version}', '--notes-file', 'release-artifacts/notes.md', '--draft']
-              if os.environ['PRERELEASE'] == 'true':
-                  command.append('--prerelease')
-              subprocess.run(command, check=True)
-          ref = api(f'git/ref/tags/{tag}')
-          # GitHub can defer tag creation until a draft is published. In that
-          # case target_commitish on the draft must still be the tested commit.
-          if ref:
-              check_tag(ref)
+              release = api('releases', 'POST', fields)
           else:
-              assert api(f'releases/tags/{tag}')['target_commitish'] == sha
-          subprocess.run(['gh', 'release', 'upload', tag, '--repo', repo, '--clobber',
-                          *map(str, files)], check=True)
-          subprocess.run(['gh', 'release', 'edit', tag, '--repo', repo, '--draft=false'], check=True)
-          check_tag(api(f'git/ref/tags/{tag}'))
-          published = api(f'releases/tags/{tag}')
+              # An untagged, unpublished draft can be completed by a repaired
+              # workflow. Existing tags were checked above and are never moved.
+              release = api(f"releases/{release['id']}", 'PATCH', fields)
+          release_id = release['id']
+          for path in files:
+              for asset in release['assets']:
+                  if asset['name'] == path.name:
+                      api(f"releases/assets/{asset['id']}", 'DELETE')
+              body = path.read_bytes()
+              upload = Request(
+                  f'https://uploads.github.com/repos/{repo}/releases/{release_id}/assets?name={quote(path.name, safe="")}',
+                  data=body, method='POST',
+                  headers={**headers, 'Content-Type': 'application/octet-stream'},
+              )
+              with urlopen(upload, timeout=60) as response:
+                  asset = json.load(response)
+              assert asset['state'] == 'uploaded' and asset['size'] == len(body)
+              if asset.get('digest'):
+                  assert asset['digest'] == 'sha256:' + hashlib.sha256(body).hexdigest()
+          published = api(f'releases/{release_id}', 'PATCH', {'draft': False})
           assert not published['draft']
+          check_tag(api(f'git/ref/tags/{tag}'))
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
               summary.write(f"GitHub release published: {published['html_url']}\n")
           PY
@@ -259,7 +294,11 @@ jobs:
                       raise
                   time.sleep(3)
           hashes = {item['filename']: item['digests']['sha256'] for item in data['urls']}
-          for path in Path('dist').iterdir():
+          # pypi-publish also writes *.publish.attestation files here; those
+          # are not distribution entries in the PyPI JSON API.
+          files = list(Path('dist').glob('*.whl')) + list(Path('dist').glob('*.tar.gz'))
+          assert files, 'No distributions to verify'
+          for path in files:
               assert hashes.get(path.name) == hashlib.sha256(path.read_bytes()).hexdigest(), path.name
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
               summary.write(f'PyPI publication verified: https://pypi.org/project/aimtv-plex/{version}/\n')
