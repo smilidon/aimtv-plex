@@ -1,54 +1,68 @@
-# AI MTV — Plex Integration Build
+# AI MTV Plex
 
-**AI Music Television**, packaged as `aimtv`: play songs from your local
-**Airadio** library or a **Plex** Media Server music section and paint reactive
-diffusion video over them. AI MTV uses feedback img2img rather than conventional
-audio-to-video generation.
+**AI Music Television**: select songs from your local **Airadio** library or a
+**Plex Media Server** music section and render reactive diffusion video over them.
+AI MTV uses feedback img2img, not conventional audio-to-video generation.
 
-> **This is a community fork** (`smilidon/aimtv-plex`) that adds Plex Media Server
-> support to the original [Decentricity/aimtv](https://github.com/Decentricity/aimtv)
-> project. It retains the Airadio playback model and includes the reliability fixes
-> described in [PLEX_INTEGRATION.md](PLEX_INTEGRATION.md).
+**Release: 0.5.0a1 (Alpha 1).** Distribution: `aimtv-plex`. Command and Python imports:
+`aimtv`. [Release downloads](https://github.com/smilidon/aimtv-plex/releases/tag/v0.5.0a1)
+include a wheel, source distribution and SHA256SUMS.
+
+> This is the community Plex fork of [Decentricity/aimtv](https://github.com/Decentricity/aimtv),
+> not an official Plex product or a Plex plugin. It retains the upstream Airadio
+> playback model and MIT license. Automated tests do not establish live Plex/GPU
+> compatibility; see [release notes](docs/releases/0.5.0a1.md) and
+> [integration details and limitations](PLEX_INTEGRATION.md).
 
 ## Requirements
 
-1. Python 3.10 or newer, plus **FFmpeg and ffprobe** on `PATH`. On Debian/Ubuntu:
-   `sudo apt-get install ffmpeg`. Git is also needed for the repository installs below.
-2. Install and run [Airadio](https://pypi.org/project/airadio/) until you have at least
-   2 library songs, 1 ad, and 1 station-id interstitial. Airadio is required in both
-   modes: interstitials and provenance verification always come from it. The current
-   startup check still requires these assets in Plex mode, even though only the
-   Plex songs are selected for playback.
-3. An NVIDIA GPU with enough free VRAM (AI MTV will check and ask you to free the GPU
-   yourself — it never kills other processes).
-4. **Plex mode only:** a reachable Plex Media Server, a Plex token with access to a
-   **music** section, and the media files readable on this machine at the paths Plex
-   reports (run AI MTV on the Plex host, or mount the media share at the same path).
-   Optionally a Genius API token for lyric lookup when tracks have no embedded lyrics.
+- Python 3.10 or newer on Linux, plus **FFmpeg and ffprobe** on `PATH`.
+  On Debian/Ubuntu: `sudo apt-get install ffmpeg`.
+- **Airadio** installed in the same Python environment. Run it until it has at least
+  2 library songs, 1 ad and 1 station-id interstitial. The current startup check
+  requires these assets even in Plex mode and when interstitial playback is disabled.
+- An NVIDIA GPU with enough free VRAM. AI MTV checks headroom and asks you to stop
+  GPU-heavy applications yourself; it never kills other processes.
+- For Plex songs: a reachable Plex server, a token with access to a **music** section,
+  and files readable locally at the exact paths reported by Plex. Run on the Plex
+  host or mount the media share at those paths. Streaming/downloading from Plex is
+  not implemented. A Genius API token is optional for lyric lookup.
 
-## Install this fork
+## Install the versioned release
 
-Install from this repository to select the Plex fork explicitly. A plain
-`pip install aimtv` or `pip install "aimtv[plex]"` selects a package from your package
-index, not this GitHub repository.
-
-With pip, preferably inside a virtual environment:
+A fresh virtual environment avoids conflicts with upstream `aimtv` and older fork
+installs. Do **not** install `aimtv` and `aimtv-plex` together: both provide the same
+Python modules and `aimtv` executable. The project name changed, but your local
+`AIMTV_HOME`, `AIRADIO_HOME` and cache locations did not.
 
 ```bash
-python -m pip install "aimtv[plex] @ git+https://github.com/smilidon/aimtv-plex.git"
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install "aimtv-plex[plex] @ https://github.com/smilidon/aimtv-plex/releases/download/v0.5.0a1/aimtv_plex-0.5.0a1-py3-none-any.whl"
+aimtv --version
+# aimtv 0.5.0a1
 ```
 
-Or as an isolated CLI with pipx:
+Or install an isolated CLI with pipx:
 
 ```bash
-pipx install --include-deps "aimtv[plex] @ git+https://github.com/smilidon/aimtv-plex.git"
+pipx install --include-deps "aimtv-plex[plex] @ https://github.com/smilidon/aimtv-plex/releases/download/v0.5.0a1/aimtv_plex-0.5.0a1-py3-none-any.whl"
 ```
 
-`--include-deps` also exposes the Airadio CLI from the same environment. Installing
-Airadio into a separate pipx environment does not make its Python modules importable
-inside AI MTV's environment.
+`--include-deps` exposes the Airadio CLI from the same environment. Installing
+Airadio in a separate pipx environment does not make its modules importable here.
+The wheel contains the application, not FFmpeg, GPU drivers or model weights;
+pip installs Python dependencies and models require a separate consented download.
 
-From source:
+**PyPI is a separate destination.** Use the GitHub wheel above unless the exact
+version is present on [PyPI](https://pypi.org/project/aimtv-plex/). After successful
+PyPI publication, the equivalent index command is:
+
+```bash
+python -m pip install "aimtv-plex[plex]==0.5.0a1"
+```
+
+A plain `pip install aimtv` selects upstream, not this fork. For source development:
 
 ```bash
 git clone https://github.com/smilidon/aimtv-plex.git
@@ -56,155 +70,161 @@ cd aimtv-plex
 python -m pip install -e ".[plex,dev]"
 ```
 
-AI MTV checks for Airadio at startup. If the library is empty, it asks you to run
-`airadio` for a bit before trying again.
+## First render
 
-## Review build (local testing)
-
-Finite playlist of **2 library songs** plus 1–3 interstitials between them, rendered
-to a single MP4 (audio + generated video):
-
-```bash
-aimtv run --review --yes
-# → ~/.local/share/aimtv/output/aimtv-review.mp4
-```
-
-AI MTV reconstructs and hash-verifies each song's exact Airadio lyrics and reads each
-interstitial's provenance record. A local Faster-Whisper model recognizes the voice
-on CPU, then a monotonic aligner uses those word times only as evidence for where the
-verified transcript is being sung. Recognition never replaces or rewrites Airadio's
-authoritative words.
-
-A deterministic RAKE/IDF-style phrase ranker supplies contextual imagery without an
-LLM, embeddings, or a network service. Interstitial visuals use only phrases from the
-verified script and cannot be covered by random footage. Songs deliberately alternate
-between well-supported lyric anchors and unrelated dream cutaways; those cutaways are
-7–16 seconds long with 3–8 seconds between them by default.
-
-Every render writes an adjacent `*.render.json` manifest tying prompts and timings
-back to the verified lyric hash and provenance ID. Inspect a complete plan without
-loading the model or using the GPU:
+Populate the Airadio assets, configure Plex below when using it, then inspect a plan:
 
 ```bash
 aimtv plan --seed 42
+aimtv run --review --yes
+# ~/.local/share/aimtv/output/aimtv-review.mp4
 ```
 
-Planning still reads and stitches the selected audio, so it requires local media and
-FFmpeg. To omit interstitials from playback, pass both `--interstitial-min 0` and
-`--interstitial-max 0`; the startup asset requirement above still applies.
+The default finite review contains 2 songs and 1–3 interstitials between them. Both
+commands support `--songs`, `--seed`, `--interstitial-min` and `--interstitial-max`.
+Set both interstitial bounds to zero to omit them from playback. Planning does not
+load GPU models, but it still reads/stitches local audio and requires FFmpeg.
 
-On first run, AI MTV shows every missing model, its destination, and the approximate
-download size, then asks once for permission. With consent it installs SD-Turbo
-(~6.5 GB) and Faster-Whisper Small (~0.5 GB), showing download progress. Voice timing
-runs locally on CPU before the visual model loads on the GPU. Both models and all
-per-clip timing results are cached locally. No audio, lyrics, prompts, or inference
-requests are sent to a hosted service — except the optional Genius lookup in Plex mode.
+For an opening preview or an explicitly named output:
 
-Models can also be installed ahead of time:
+```bash
+aimtv run --review --yes --max-seconds 15 --out "$HOME/aimtv-renders/preview.mp4"
+```
+
+On first run AI MTV lists missing models, destinations and approximate download
+sizes, then requests consent. `--yes` supplies that consent without prompting.
+The SD-Turbo footprint is approximately 6.5 GB and Faster-Whisper Small about 0.5 GB.
+Voice timing runs on CPU before the visual model loads on the GPU. Models and timing
+results are cached locally. To install models ahead of time:
 
 ```bash
 aimtv fetch-models
 ```
 
-## Plex mode
+No audio, lyrics, prompts or inference requests are sent to a hosted inference
+service. The optional Genius lookup sends track title/artist queries to Genius;
+model downloads also require network access.
 
-Give `run` or `plan` a Plex server, token and music section and the songs are sampled
-from that section instead of the Airadio library. Every Plex connection flag has an
-environment variable fallback; use the variables for tokens so they do not appear
-in the command's process arguments. Keep token values out of shared logs and shell
-history; the exports below contain placeholders only.
+## Plex configuration
+
+Every Plex connection flag has an environment-variable fallback. Variables keep
+secrets out of process arguments, but do not paste real tokens into shared logs,
+issues or shell history. These examples contain placeholders only:
 
 ```bash
 export PLEX_URL="http://localhost:32400"
 export PLEX_TOKEN="your_plex_token"
-export PLEX_SECTION="Music"              # library section name
-export GENIUS_TOKEN="your_genius_token"   # optional lyric fallback
+export PLEX_SECTION="Music"
+export GENIUS_TOKEN="your_genius_token"  # optional
 
-aimtv plan --seed 42          # inspect the playlist without loading models
-aimtv run --review --yes      # render
+aimtv plan --seed 42
+aimtv run --review --yes
 ```
 
-The same values can be passed as `--plex-url`, `--plex-token`, `--plex-section` and
-`--genius-token`. All three Plex values are required together; a partial set is an
-error. Movie and TV sections are rejected with an explicit music-library error.
+Flags: `--plex-url`, `--plex-token`, `--plex-section`, `--genius-token`. URL, Plex token
+and section are required together; a partial configuration is an error. Movie/TV
+sections are rejected. Interstitials and their provenance still come from Airadio.
 
-How it works:
+Up to `max(100, --songs)` track keys are listed before seeded selection; only the
+chosen tracks are resolved. This is not uniform sampling over larger libraries.
+Reproducibility assumes the same library and returned track order. Interstitial
+candidates are sorted before sampling to avoid filesystem-order differences.
 
-- Up to `max(100, --songs)` tracks are listed from the section (metadata only), then
-  `--songs` are sampled with the render seed. Reproducibility assumes the same library
-  and returned track order; this is not uniform sampling across a larger library.
-- Audio is read straight from the file path Plex reports. Streaming/downloading media
-  from Plex is **not** implemented. Mixed sample rates/channel counts are normalized
-  before joining audio pieces, preserving their duration and pitch. Matching PCM
-  pieces keep the stream-copy path.
-- Lyrics are taken from embedded tags (ID3 `USLT`, Vorbis/FLAC `LYRICS`, MP4 `©lyr`),
-  then from Genius if `GENIUS_TOKEN` is set. The text is cached under
-  `~/.cache/aimtv/plex/<server-id-sha256>/<ratingKey>.lyrics.txt`, with source, file
-  identity and lyric hash in an adjacent `<ratingKey>.lyrics.json` file. Override
-  the cache root with `AIMTV_CACHE_HOME`. Tokens are not stored in these files.
-- Cached lyrics are refreshed when the local audio path, size, modification time or
-  track title/artist/album changes, or when the cache is incomplete or corrupt.
-  Missing lyrics are retried on later runs, so adding tags or enabling Genius works
-  without manual cache removal. Delete a track's `.lyrics.txt` to force a refresh.
-  Old flat `<ratingKey>.lyrics.txt` caches are ignored, not migrated or deleted.
-- The render manifest records the lyric source (`plex embedded lyrics` or
-  `plex genius lyrics`), server-scoped provenance ID and SHA-256 of the text used.
-  Unlike Airadio songs, that text is not reconstructed from a catalog — embedded
-  tags and Genius are trusted as given. Here, `verified` means sourced and traceable,
-  not independently confirmed as the words performed in the recording.
-- A track with no lyrics or an unknown lyric source is reported as `UNVERIFIED` and
-  `run` refuses to render. Tag the file or provide a Genius token.
+### Lyrics, traceability and caching
 
-### Troubleshooting
+Plex lyrics come from embedded tags (ID3 `USLT`, Vorbis/FLAC `LYRICS`, MP4 `©lyr`),
+then Genius when configured. A missing lyric or unknown source is `UNVERIFIED` and
+rendering is refused. Add tags or configure Genius, then retry.
 
-- **Can't connect:** check `PLEX_URL` is reachable from this machine and the token is
-  valid for that server (`http://<host>:32400/web` should load).
-- **Section not found:** `PLEX_SECTION` must match the library name in Plex exactly
-  and must identify a music library.
-- **"not readable locally":** the path Plex reports for the track does not exist
-  here. Run on the Plex host or mount the share at the same path.
-- **No lyrics:** tag the file with lyrics, or set `GENIUS_TOKEN`, then retry.
-- **Missing ffmpeg/ffprobe:** install the system FFmpeg package and ensure both
-  executables are available on `PATH`.
+Caches live at `~/.cache/aimtv/plex/<server-id-sha256>/<ratingKey>.lyrics.txt` with
+source, file identity and lyric hash in a `.lyrics.json` sidecar. Set
+`AIMTV_CACHE_HOME` to change the root. Tokens are not stored in cache files.
+Changed paths, file sizes/mtimes or track metadata invalidate a cached entry;
+incomplete/corrupt entries are rebuilt and empty results retried. Delete a current
+track's `.lyrics.txt` to force refresh. Old flat caches are ignored, not deleted.
 
-## Doctor
+Every render writes an adjacent `*.render.json` manifest recording lyric hashes,
+sources, prompts and timing evidence. For Plex, `verified` means **sourced and
+traceable**, not independently proven to match the sung performance. Airadio song
+lyrics are reconstructed from the catalog and hash-verified; interstitial scripts
+are resolved from their provenance records.
+
+Faster-Whisper supplies local voice timing evidence, not replacement lyrics. A
+local deterministic RAKE/IDF-style phrase ranker supplies imagery without an LLM,
+embeddings or hosted service. Interstitial visuals use their verified scripts.
+Songs alternate contextual lyric imagery with deliberate dream cutaways (normally
+7–16 seconds long, separated by 3–8 seconds). Mixed PCM audio formats are normalized
+before joining; compatible PCM retains the sample-preserving stream-copy path.
+
+## Watch the results in Plex (no plugin required)
+
+Plex has removed support for playback through plugins and announced retirement of
+the legacy plugin framework. Do not put this Python package in Plex's `Plug-ins`
+folder. It is a separate application that reads library metadata and local audio,
+then creates MP4 files for Plex to serve.
+
+1. Render outside any watched Plex library, using a distinct `--out` filename.
+2. After rendering completes successfully, copy the finished MP4 into a folder
+   accessible to Plex. Keep the render manifest for provenance.
+3. In Plex Web, add an **Other Videos** library named **AI MTV** pointing to that
+   folder, or add the folder to an existing suitable library. Scan library files.
+4. Play the resulting video from that library in your Plex clients.
+
+Rendering outside the watched folder prevents Plex from scanning a partially
+written MP4. The current release does not add a Plex interface, inject live visuals
+into Plex/Plexamp playback, automatically scan Plex, or expose a live TV channel.
+A GUI or containerized companion service would be a separate future feature.
+
+Official Plex references: [plugin support](https://support.plex.tv/articles/201053748-overview/),
+[framework retirement announcement](https://forums.plex.tv/t/important-information-for-users-running-plex-media-server-on-nvidia-shield-devices/883484),
+and [library setup](https://support.plex.tv/articles/200288896-basic-setup-wizard/).
+
+## Troubleshooting and doctor
 
 ```bash
 aimtv doctor
 ```
 
-This checks Airadio assets and NVIDIA GPU headroom; it is not a live Plex connection
-test or a comprehensive dependency check.
+Doctor checks Airadio assets and NVIDIA GPU headroom; it is not a live Plex
+connection test or comprehensive dependency check. Check Plex reachability and
+credentials for connection failures, and match the music section's name exactly.
+A "not readable locally" error means Plex's file paths do not exist on this host.
+Missing FFmpeg/ffprobe errors require installing the system FFmpeg package on PATH.
 
-## Channel prompts
+Do not run simultaneous renders with the same `AIMTV_HOME`: review staging paths
+are shared. [Known limitations](PLEX_INTEGRATION.md#not-implemented--open) also cover
+sampling, lyric trust, missing streaming support and source-aware startup checks.
 
-The editable JSON bank provides the visual style suffix and legacy random-cutaway
-prompts:
+## Editable prompts
 
-- **Edit this:** `~/.local/share/aimtv/prompts.json` (preferred; created automatically)
-- Package default: `aimtv/data/prompts.json`
+Edit `~/.local/share/aimtv/prompts.json` (created automatically), or use the bundled
+`aimtv/data/prompts.json` as a reference. Schema: `prompts` (channel lines),
+`subjects` (short subject tags), and `style_suffix` (appended to picks).
 
-Schema: `prompts` (list of channel lines), `subjects` (short subject tags for weighting),
-`style_suffix` (appended to every pick). Add or remove strings anytime — no code change.
+## Development and releases
 
-## Tests
-
-With the development and Plex dependencies installed, run:
+With `.[plex,dev]` and FFmpeg installed:
 
 ```bash
+python -m pyflakes src/aimtv tests
 python -m pytest -q
 python -m build
 python -m twine check dist/*
 ```
 
-The CI workflow runs the suite on Python 3.10 and 3.12, checks for undefined/unused
-Python names with pyflakes, and builds/checks the distributions. Plex/Genius calls
-are mocked; audio integration tests use real FFmpeg and synthetic tones. No live
-Plex server, credentials, model downloads or GPU are needed for these tests.
+CI uses Python 3.10 and 3.12. Plex/Genius calls are mocked; audio regressions use
+real FFmpeg and synthetic tones. No live credentials, model downloads or GPU are
+used. The release workflow also installs the wheel in a fresh environment to check
+its metadata, package resources and CLI; this is not full inference validation.
+
+See [RELEASING.md](docs/RELEASING.md) for versioning, GitHub releases and PyPI
+Trusted Publishing setup. The version in `src/aimtv/__init__.py` drives package
+metadata, `aimtv --version` and render manifests.
 
 ## License and acknowledgements
 
-MIT — see [LICENSE](LICENSE). Plex access uses
-[python-plexapi](https://github.com/pkkid/python-plexapi); lyric lookup uses
-[lyricsgenius](https://github.com/johnwmillr/LyricsGenius) against the
-[Genius API](https://genius.com/api-clients).
+MIT — see [LICENSE](LICENSE). Original AI MTV by Decentricity; Plex community fork
+maintained by smilidon. Plex access uses [python-plexapi](https://github.com/pkkid/python-plexapi);
+lyric lookup uses [lyricsgenius](https://github.com/johnwmillr/LyricsGenius).
+This project is not affiliated with or endorsed by Plex. Use media and lyrics you
+have the necessary rights to use; the code license does not license third-party media.

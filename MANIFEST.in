@@ -1,0 +1,2 @@
+include PLEX_INTEGRATION.md
+recursive-include docs *.md

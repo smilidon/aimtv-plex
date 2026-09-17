@@ -1,3 +1,4 @@
-"""AI MTV — sovereign AI Music Television over an Airadio library."""
+"""AI MTV Plex — reactive music television from Airadio or Plex."""
 
-__version__ = "0.4.0"
+# Single source for package metadata, the CLI and render manifests.
+__version__ = "0.5.0a1"

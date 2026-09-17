@@ -3,14 +3,15 @@ requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "aimtv"
-version = "0.4.0"
-description = "AI MTV — sovereign AI Music Television from a local Airadio library or Plex server"
+name = "aimtv-plex"
+dynamic = ["version"]
+description = "AI MTV — local reactive AI music television with a Plex music source"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
 authors = [{ name = "Decentricity" }]
+maintainers = [{ name = "smilidon" }]
 keywords = ["ai-music", "music-video", "airadio", "plex", "local-ai", "generative-video"]
 classifiers = [
   "Development Status :: 3 - Alpha",
@@ -36,12 +37,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-plex = [
-    "plexapi>=4.0",
-    "lyricsgenius>=3.0",
-    "mutagen>=1.45",
-]
-dev = ["build", "twine", "pytest", "aimtv[plex]"]
+plex = ["plexapi>=4.0", "lyricsgenius>=3.0", "mutagen>=1.45"]
+dev = ["build", "twine", "pytest", "pyflakes"]
 
 [project.scripts]
 aimtv = "aimtv.cli:main"
@@ -50,7 +47,11 @@ aimtv = "aimtv.cli:main"
 Homepage = "https://github.com/smilidon/aimtv-plex"
 Repository = "https://github.com/smilidon/aimtv-plex"
 Issues = "https://github.com/smilidon/aimtv-plex/issues"
+Releases = "https://github.com/smilidon/aimtv-plex/releases"
 Upstream = "https://github.com/Decentricity/aimtv"
+
+[tool.setuptools.dynamic]
+version = {attr = "aimtv.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
